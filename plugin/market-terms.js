@@ -83,3 +83,7 @@ export const UPDOWN_CLIENT_V22_HASH = createHash('sha256').update(readFileSync(U
 // version 23: version 22 with each order's transaction id to the explorer, and a past order's times kept after a reload
 export const UPDOWN_CLIENT_V23_FILE = new URL('../client/index-v23.html', import.meta.url);
 export const UPDOWN_CLIENT_V23_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V23_FILE)).digest();
+// version 25: version 23 with the market quote from the book's best ask (no payout promised without one), the price before the book is read
+// shown as loading, and no minus on a zero loss (bitcoin-arena kanban #2836, feedback #084)
+export const UPDOWN_CLIENT_V25_FILE = new URL('../client/index-v25.html', import.meta.url);
+export const UPDOWN_CLIENT_V25_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V25_FILE)).digest();

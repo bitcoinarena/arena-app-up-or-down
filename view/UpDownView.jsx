@@ -68,12 +68,12 @@ export function PastTable({ past, outcomes }) {
 /** The totals: { count, won, lost, net, wonNum, lostNum, netNum, pend } - the full words, and on a phone one short line. */
 export function TotalsLong({ t }) {
   return (
-    <>{t.count} closed · won <b className="won">+{t.won}</b> · lost <b className="lost">−{t.lost}</b> · net <b className={t.netMsat >= 0 ? 'won' : 'lost'}>{t.netMsat >= 0 ? '+' : '−'}{t.net}</b>
+    <>{t.count} closed · won <b className="won">+{t.won}</b> · lost <b className="lost">{t.lostNum && t.lostNum !== '0' ? '−' : ''}{t.lost}</b> · net <b className={t.netMsat >= 0 ? 'won' : 'lost'}>{t.netMsat >= 0 ? '+' : '−'}{t.net}</b>
       {t.pend ? ` · ${t.pend} pending` : ''}</>);
 }
 export function TotalsShort({ t }) {
   return (
-    <>{t.count} closed · <b className="won">+{t.wonNum}</b> · <b className="lost">−{t.lostNum}</b> · net <b className={t.netMsat >= 0 ? 'won' : 'lost'}>{t.netMsat > 0 ? '+' : t.netMsat < 0 ? '−' : '±'}{t.netNum} sats</b>
+    <>{t.count} closed · <b className="won">+{t.wonNum}</b> · <b className="lost">{t.lostNum && t.lostNum !== '0' ? '−' : ''}{t.lostNum}</b> · net <b className={t.netMsat >= 0 ? 'won' : 'lost'}>{t.netMsat > 0 ? '+' : t.netMsat < 0 ? '−' : '±'}{t.netNum} sats</b>
       {t.pend ? ` · ${t.pend} pending` : ''}</>);
 }
 

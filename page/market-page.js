@@ -44,7 +44,7 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
         // the signer nodes' table" and stayed "waiting for the result"): every seat asked at once, the answer holding this pick's
         // entry kept, else the fullest; a final, verified answer is kept for good only once it holds the row
         const hasRow = (o) => !!(o && o.table && Array.isArray(o.table.rows) && o.table.rows.some((x) => x.entryId === p.entryIdHex));
-        if (had && had.state === 'ATTESTED' && had.final && had.check && had.check.verified && (hasRow(had) || !p.entryIdHex)) continue;
+        if (had && had.state === 'ATTESTED' && had.final && had.check && had.check.verified && (hasRow(had) || !p.entryIdHex) && (!p.order || p.bookClaim || !ARENACLIENT.bookClaimOf)) continue;
         const market = marketOfPick(p);
         // a market this page cannot read is asked no more - and its orders are not kept out of sight for it (quietOrders)
         if (!market) { OUTCOMES_READ.add(p.roundIdHex); continue; }
@@ -80,6 +80,16 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
             MARKET_OUTCOMES.set(p.roundIdHex, o);
             break;
           } catch { /* the next seat */ }
+        }
+        // WHAT THE BOOK PAYS THIS ORDER (kanban #2902, feedback #140): an order book round is settled by its book, not by the
+        // pari-mutuel table - with a sell the pick's side alone no longer says won or lost. Once the outcome is verified, the round's
+        // book is read from its seats and settled here by the protocol's rule (ARENACLIENT.bookClaimOf: two seats' identical books)
+        const got = MARKET_OUTCOMES.get(p.roundIdHex);
+        if (p.order && p.entryIdHex && !p.bookClaim && ARENACLIENT.bookClaimOf && got && got.state === 'ATTESTED' && got.check && got.check.verified && Number.isInteger(got.outcome)) {
+          const books = (await Promise.all((p.nodes || []).map((n) => fetch(String(n).replace(/\/+$/, '') + '/book?round=' + p.roundIdHex, { cache: 'no-store', signal: AbortSignal.timeout(5000) })
+            .then((r) => (r.ok ? r.json() : null)).catch(() => null)))).filter(Boolean);
+          const claim = ARENACLIENT.bookClaimOf({ books, outcome: got.outcome, entryIdHex: p.entryIdHex, stakeMsat: String(p.stakeMsat) });
+          if (claim) rememberPick(Object.assign({}, p, { bookClaim: claim }));
         }
       }
     }

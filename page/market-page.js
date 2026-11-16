@@ -35,6 +35,7 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
     window.ARENA_MARKET_OUTCOMES = MARKET_OUTCOMES;
     // THE ROUNDS WHOSE OUTCOME THIS PAGE HAS ASKED THE SEATS FOR AT LEAST ONCE
     const OUTCOMES_READ = new Set();
+    const BOOK_TRIES = 5;   // feedback #157: a book claim is asked for at most this often
     async function readMarketOutcomes() {
       for (const p of readPicks()) {
         if (Date.now() < Number(p.entryCloseMs)) continue;
@@ -44,7 +45,7 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
         // the signer nodes' table" and stayed "waiting for the result"): every seat asked at once, the answer holding this pick's
         // entry kept, else the fullest; a final, verified answer is kept for good only once it holds the row
         const hasRow = (o) => !!(o && o.table && Array.isArray(o.table.rows) && o.table.rows.some((x) => x.entryId === p.entryIdHex));
-        if (had && had.state === 'ATTESTED' && had.final && had.check && had.check.verified && (hasRow(had) || !p.entryIdHex) && (!p.order || p.bookClaim || !ARENACLIENT.bookClaimOf)) continue;
+        if (had && had.state === 'ATTESTED' && had.final && had.check && had.check.verified && (hasRow(had) || !p.entryIdHex) && (!p.order || p.bookClaim || (p.bookTries || 0) >= BOOK_TRIES || !ARENACLIENT.bookClaimOf)) continue;
         const market = marketOfPick(p);
         // a market this page cannot read is asked no more - and its orders are not kept out of sight for it (quietOrders)
         if (!market) { OUTCOMES_READ.add(p.roundIdHex); continue; }
@@ -85,11 +86,20 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
         // pari-mutuel table - with a sell the pick's side alone no longer says won or lost. Once the outcome is verified, the round's
         // book is read from its seats and settled here by the protocol's rule (ARENACLIENT.bookClaimOf: two seats' identical books)
         const got = MARKET_OUTCOMES.get(p.roundIdHex);
-        if (p.order && p.entryIdHex && !p.bookClaim && ARENACLIENT.bookClaimOf && got && got.state === 'ATTESTED' && got.check && got.check.verified && Number.isInteger(got.outcome)) {
+        // AT MOST BOOK_TRIES READS, A MINUTE APART (feedback #157): an order the seats' books cannot settle here (one seat's book, books that differ)
+        // is asked again a few times, not every 10 s for good; an order that matched nobody - zero shares and cost in two seats' identical books - is
+        // paid back whole by the book: its claim is its stake, and it is read no more
+        if (p.order && p.entryIdHex && !p.bookClaim && ARENACLIENT.bookClaimOf && got && got.state === 'ATTESTED' && got.check && got.check.verified && Number.isInteger(got.outcome)
+          && (p.bookTries || 0) < BOOK_TRIES && Date.now() - (p.bookTriedMs || 0) > 60000) {
           const books = (await Promise.all((p.nodes || []).map((n) => fetch(String(n).replace(/\/+$/, '') + '/book?round=' + p.roundIdHex, { cache: 'no-store', signal: AbortSignal.timeout(5000) })
             .then((r) => (r.ok ? r.json() : null)).catch(() => null)))).filter(Boolean);
           const claim = ARENACLIENT.bookClaimOf({ books, outcome: got.outcome, entryIdHex: p.entryIdHex, stakeMsat: String(p.stakeMsat) });
+          const posOf = (bk) => (bk && Array.isArray(bk.positions) ? bk.positions.find((x) => x && x.entry === p.entryIdHex) : null);
+          const none = (x) => !!x && (x.shares || []).every((v) => String(v) === '0') && String(x.cost || '0') === '0' && String(x.sellDebt || '0') === '0';
+          const nobody = !claim && books.filter((bk) => none(posOf(bk))).length >= 2;
           if (claim) rememberPick(Object.assign({}, p, { bookClaim: claim }));
+          else if (nobody) rememberPick(Object.assign({}, p, { unfilled: true, bookClaim: { outMsat: String(p.stakeMsat), gainMsat: '0', unfilled: true } }));
+          else rememberPick(Object.assign({}, p, { bookTries: (p.bookTries || 0) + 1, bookTriedMs: Date.now() }));
         }
       }
     }

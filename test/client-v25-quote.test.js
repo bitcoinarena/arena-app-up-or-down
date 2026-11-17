@@ -44,7 +44,7 @@ test('#084 with no ask in the book the market buy promises no payout; with an as
   assert.equal(v25.mwin, '–', `with no ask the quote promised ${v25.mwin}`);
   assert.match(v25.mprice, /no seller yet/);
   // an ask at 40¢ for Up (a Down buy at 60¢): quoted at the ask, not the last match
-  const withAsk = last(await drawn('index-v25.html', { ...NO_ASKS, levels: { buys: [{ outcome: 1, price: 60000 }, { outcome: 0, price: 9000 }], sells: [] } }));
+  const withAsk = last(await drawn('index-v25.html', { ...NO_ASKS, levels: { buys: [{ outcome: 1, price: 60000, netMsat: '1000000' }, { outcome: 0, price: 9000 }], sells: [] } }));
   assert.equal(withAsk.mprice, 'at 40¢');
   assert.equal(withAsk.mwin, '247 sats');
 });

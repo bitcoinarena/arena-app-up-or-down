@@ -72,6 +72,14 @@ if (!A || !A.market) {
     for (const x of lv.sells || []) { const c = Math.round(Number(x.price) / TICK); if (Number(x.outcome) === side) down(c); else up(100 - c); }
     return { bid, ask };
   };
+  // THE ASKS OF A SIDE WITH THEIR SIZES, cheapest first (bitcoin-arena kanban #2929, feedback #236): a sell of the side offers its unsold
+  // shares at its price; a buy of the other side at q¢ is an ask at 100 less q for the shares its rest of budget buys there (a set)
+  const asksOf = (side) => {
+    const lv = (book && book.levels) || {}, out = [];
+    for (const x of lv.sells || []) { const c = Math.round(Number(x.price) / TICK); if (Number(x.outcome) === side) out.push({ c, shares: Math.floor(Number(x.sharesMsat || 0) / SHARE) }); }
+    for (const x of lv.buys || []) { const q = Math.round(Number(x.price) / TICK); if (Number(x.outcome) !== side && q > 0) out.push({ c: 100 - q, shares: Math.floor(Number(x.netMsat || 0) * 100 / q / SHARE) }); }
+    return out.filter((l) => l.shares > 0).sort((x, y) => x.c - y.c);
+  };
   // MY SHARES IN THE WINDOW (version 18), per side, from the book's positions of this tab's orders: an entry holds of a side what it
   // bought of it less what it sold of it (a sell is paid by buying the other side: one Up and one Down are a set); what it still offers
   // is its sells that rest in the book, and the ones just sent that no batch has carried yet. `entries`: what each entry can sell now
@@ -111,7 +119,18 @@ if (!A || !A.market) {
     }
     draw();
   }
-  async function readBook() { if (current) { try { book = await A.market.book(current.id); } catch { book = null; } } draw(); }
+  // A BOOK THAT COULD NOT BE READ IS NOT AN EMPTY BOOK (bitcoin-arena kanban #2929, feedback #250): a failed read set book = null, and every
+  // resting sell older than 8 s then read "sold" and My shares 0. The last book read of the window is kept, and bookOk says whether it is fresh
+  let bookFor = null, bookOk = false;
+  async function readBook() {
+    if (current) {
+      const id = current.id;
+      let b = null;
+      try { b = await A.market.book(id); } catch { b = null; }
+      if (b) { book = b; bookFor = id; bookOk = true; } else { bookOk = false; if (bookFor !== id) book = null; }
+    }
+    draw();
+  }
   // WHAT THE SHEET ASKS: { stakeSat, limitCents, expiryMs, shares, win } or why not
   function asked() {
     if (dir === 'sell') {
@@ -121,10 +140,14 @@ if (!A || !A.market) {
       if (!H.free) return { sell: true, why: H.elsewhere ? `these ${outcomes[pick]} shares were bought in another tab: sell them there` : H.offered ? `all your ${outcomes[pick]} shares are offered already` : `you hold no ${outcomes[pick]} shares in this window` };
       if (!(sh >= 1)) return { sell: true, why: 'at least 1 share' };
       if (sh > H.free) return { sell: true, why: `you can sell at most ${H.free.toLocaleString('en-US')} ${outcomes[pick]} shares` };
-      const bid = bestOf(pick).bid, at = mode === 'market' ? (bid !== null ? bid : priceOf(pick)) : Math.floor(Number(form.slp));
+      // NO BUYER, NO PROCEEDS (bitcoin-arena kanban #2929, feedback #238): with no bid a market sell was priced at the last match (or the 50¢
+      // placeholder) and the button stayed on. And the quote is what the sell's own limit, 10¢ under the bid, is sure to pay, not the full bid
+      const bid = bestOf(pick).bid;
+      if (mode === 'market' && bid === null) return { sell: true, why: 'no buyer in the book now: no price to sell at' };
+      const at = mode === 'market' ? bid : Math.floor(Number(form.slp));
       const limitCents = mode === 'market' ? Math.max(1, at - 10) : at;
       if (!(limitCents >= 1 && limitCents <= 99)) return { sell: true, why: 'a limit price of 1 to 99¢' };
-      return { sell: true, shares: sh, limitCents, at, get: Math.floor(sh * at / 100 * (1 - FEE_BPS / 10000)), free: H.free };
+      return { sell: true, shares: sh, limitCents, at, get: Math.floor(sh * limitCents / 100 * (1 - FEE_BPS / 10000)), free: H.free };
     }
     if (mode === 'market') {
       const amt = Math.floor(Number(form.amt));
@@ -136,9 +159,18 @@ if (!A || !A.market) {
       // yet, and no payout is promised; the order still waits its 60 s for one
       if (Math.floor(net(amt) / (p / 100)) < MIN_SHARES) return { why: `at this price an order is at least ${Math.ceil(MIN_SHARES * p / 100 / (1 - FEE_BPS / 10000))} sats` };
       if (ask === null) return { stakeSat: amt, limitCents: p, expiryMs: Date.now() + 60000, shares: null, win: null, noSeller: true };
-      const shares = Math.floor(net(amt) / (ask / 100));
+      // THE ASKS WALKED WITH THEIR SIZES (bitcoin-arena kanban #2929, feedback #236): the whole stake was priced at the best ask ("To win 990
+      // sats at 10¢" with 5 shares resting there). Now each ask level up to the order's limit fills what it holds; what the book cannot fill
+      // now is not promised
+      let budget = net(amt), shares = 0, top = ask;
+      for (const l of asksOf(pick)) {
+        if (l.c > p || budget < l.c / 100) break;
+        const take = Math.min(l.shares, Math.floor(budget / (l.c / 100)));
+        if (take > 0) { shares += take; budget -= take * l.c / 100; top = l.c; }
+      }
+      const short = budget >= p / 100;
       // A MARKET ORDER DOES NOT REST: what its first batches do not fill expires 60 s on and comes back at settlement
-      return { stakeSat: amt, limitCents: p, expiryMs: Date.now() + 60000, shares, win: shares };
+      return { stakeSat: amt, limitCents: p, expiryMs: Date.now() + 60000, shares, win: shares, top, short };
     }
     const lp = Math.floor(Number(form.lp)), sh = Math.floor(Number(form.sh));
     if (!(lp >= 1 && lp <= 99)) return { why: 'a limit price of 1 to 99¢' };
@@ -205,7 +237,7 @@ if (!A || !A.market) {
       for (const x of o.sells || []) {
         // a sell no longer resting after its order's cancel was cancelled with it (version 19), not sold
         const chip = refusedSells.has(x.id) ? ['lost', 'refused'] : restingSells.has(x.id) ? ['open', 'offered'] : o.cancelled ? ['lost', 'cancelled']
-          : now - x.atMs < 8000 ? ['wait', 'placing…'] : ['won', 'sold'];
+          : now - x.atMs < 8000 ? ['wait', 'placing…'] : !bookOk ? ['wait', 'book not read'] : ['won', 'sold'];
         // A RESTING SELL IS CANCELLED WITH ITS ORDER (version 19): the order's cancel takes its resting buy and sells out of the book
         const cancel = chip[1] === 'offered' ? { entry: o.entry, busy: cancelling.has(o.entry) } : null;
         sellCards.push({ key: x.id, side: Number(x.outcome), shares: Math.floor(Number(x.sharesMsat) / SHARE).toLocaleString('en-US'), limit: Math.round(Number(x.price) / TICK), window: win(o.entryCloseMs), chip, at: x.atMs, cancel });
@@ -227,11 +259,12 @@ if (!A || !A.market) {
     VIEW.draw({ outcomes, view: adv ? 'advanced' : 'compact', ...card, chance: known ? upCents() + '%' : '…', prices: known ? [sideCents(0) + '¢', sideCents(1) + '¢'] : ['…', '…'], pick, sideName: outcomes[pick],
       dir, mode, modeLabel: mode === 'market' ? 'Market' : 'Limit', menuOpen, form: { ...form },
       held: Math.floor(H[pick].held / SHARE).toLocaleString('en-US') + ' ' + outcomes[pick] + (H[pick].offered >= SHARE ? ` (${Math.floor(H[pick].offered / SHARE).toLocaleString('en-US')} offered)` : ''),
-      sget: a.sell && !a.why ? '~' + sats(a.get) + ' at ' + a.at + '¢' : '–',
+      sget: a.sell && !a.why ? 'at least ' + sats(a.get) + ' at ' + a.limitCents + '¢ or better' : '–',
       snote: mode === 'market' ? 'Sells at the best bid, at least ' + (a.sell && !a.why ? a.limitCents + '¢' : '10¢ under it') + '. A sell stays in the book until it fills or the window closes; you are paid when the market resolves.'
         : 'A sell stays in the book until it fills or the window closes; you are paid when the market resolves.',
       shares: shareRows, sells: sellCards, cancelAll: cancellable.length > 1 ? { busy: cancellingAll } : null,
-      mwin: a.why || a.noSeller ? '–' : sats(a.win), mprice: a.why ? '' : a.noSeller ? 'no seller yet: your order waits up to 60 s for one' : 'at ' + bestOf(pick).ask + '¢', ltotal: a.why ? '–' : sats(a.stakeSat), lwin: a.why ? '–' : sats(a.win),
+      mwin: a.why || a.noSeller ? '–' : sats(a.win), mprice: a.why ? '' : a.noSeller ? 'no seller yet: your order waits up to 60 s for one'
+        : 'at ' + (a.top > bestOf(pick).ask ? bestOf(pick).ask + '–' + a.top : bestOf(pick).ask) + '¢' + (a.short ? `; only ${a.win.toLocaleString('en-US')} shares rest up to ${a.limitCents}¢ now: the rest may fill dearer or not at all` : ''), ltotal: a.why ? '–' : sats(a.stakeSat), lwin: a.why ? '–' : sats(a.win),
       err: current && current.free ? 'Orders need a paid round' : (a.why || said),
       go: sellGo ? { disabled: !current || !!a.why || current.free || selling, text: 'Sell ' + outcomes[pick] }
         : { disabled: !current || !!a.why || current.free || !!(js && js.state === 'joining' && !js.cls), text: 'Buy ' + outcomes[pick] },

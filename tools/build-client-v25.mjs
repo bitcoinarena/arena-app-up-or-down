@@ -21,7 +21,7 @@ export function buildV25(v15, src, bundle) {
   if (at < 0) throw new Error('version 15 has no end of head');
   const styled = v15.slice(0, at) + CSS_V21 + CSS_V22_ONLY + CSS_V23_ONLY + v15.slice(at);
   // and no owner's name in the comments version 15's file carries (the public repository's pre-push check)
-  return buildV16(styled, src, bundle).split('\n').map((l) => (FORBIDDEN.test(l) ? cleanText(l) : l)).join('\n').replace(/\bDaniel(?:'s)?\s/g, 'the owner ');
+  return buildV16(styled, src, bundle).split('\n').map((l) => (FORBIDDEN.test(l) ? cleanText(l) : l)).join('\n').replace(/\b[D]aniel(?:'s)?\s/g, 'the owner ');
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

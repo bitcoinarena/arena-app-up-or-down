@@ -501,7 +501,11 @@ if (!A || !A.market) {
     input: (k, v) => { form[k] = v; if (k === 'amt') keepAmount(); draw(); },
     step: (dir) => {
       const v = Math.floor(Number(form.amt)) || 0;
-      const next = dir > 0 ? v + stepAt(v) : v - stepAt(Math.max(1, v - 1));
+      // − DOWN TO THE STEP GRID (bitcoin-arena, feedback #162): it took the step of v - 1 whole, so 101 went to 1, 150 to 50,
+      // 1,001 and 10,001 to 1. Now an amount off the grid goes down to it (101 -> 100, 150 -> 100, 1,001 -> 1,000) and one on it by one step
+      // (100 -> 90, 1,000 -> 900, as the comment above says)
+      const down = stepAt(Math.max(1, v - 1));
+      const next = dir > 0 ? v + stepAt(v) : (v % down ? v - (v % down) : v - down);
       form.amt = String(Math.min(MAX_SAT, Math.max(MIN_SAT, next))); keepAmount(); draw();
     },
     add: (n) => { form.amt = String(Math.min(MAX_SAT, (Math.floor(Number(form.amt)) || 0) + n)); keepAmount(); draw(); },

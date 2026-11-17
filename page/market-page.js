@@ -53,16 +53,27 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
           .then((r) => (r.ok ? r.json() : null)).catch(() => null)))).filter(Boolean);
         OUTCOMES_READ.add(p.roundIdHex);
         const rowsOf = (o) => (o && o.table && Array.isArray(o.table.rows) ? o.table.rows.length : -1);
-        const best = answers.find(hasRow) || answers.sort((a, b) => rowsOf(b) - rowsOf(a))[0];
+        // EVERY ANSWER THAT HOLDS THE ROW IS CHECKED, NOT ONLY THE FIRST SEAT'S (kanban #2922, feedback #224): checkMarketOutcome does not throw
+        // on a bad answer, it says { verified: false } - and the first seat's answer alone was checked and kept, so one seat with an
+        // unverifiable answer held the result and the book claim back for good while the others held a verifiable one. The answers with
+        // the row first, in seat order, then the rest, fullest first; the first verified one is kept
+        const ranked = [...answers.filter(hasRow), ...answers.filter((o) => !hasRow(o)).sort((a, b) => rowsOf(b) - rowsOf(a))];
+        const best = ranked[0];
         // NO ROW ANYWHERE, ITS ROUND CLOSED: an order that matched nobody has no row - the table holds filled positions
-        // only. Its position read from the round's book: 0 shares and 0 cost is an order that matched nobody, its stake back whole
-        if (best && best.state === 'ATTESTED' && !hasRow(best) && p.entryIdHex && !p.unfilled && Date.now() > Number(p.entryCloseMs) + 5000) {
+        // only. Its position read from the round's books: 0 shares, 0 cost and no sell debt at two seats is an order that matched
+        // nobody, its stake back whole. NOT ONE SEAT'S WORD, AND NOT FOR GOOD (feedback #239): the first seat whose book held the entry
+        // made it "unfilled" for good; now two seats' empty positions are needed, and it is read again on every pass until a book claim settles it
+        const anyRow = answers.some(hasRow);
+        if (anyRow && p.unfilled && !p.bookClaim) rememberPick(Object.assign({}, p, { unfilled: false }));
+        if (best && best.state === 'ATTESTED' && !anyRow && p.entryIdHex && !p.bookClaim && Date.now() > Number(p.entryCloseMs) + 5000) {
           const books = (await Promise.all((p.nodes || []).map((n) => fetch(String(n).replace(/\/+$/, '') + '/book?round=' + p.roundIdHex, { cache: 'no-store', signal: AbortSignal.timeout(5000) })
             .then((r) => (r.ok ? r.json() : null)).catch(() => null)))).filter(Boolean);
-          const pos = books.map((b) => (b.positions || []).find((x) => x.entry === p.entryIdHex)).find(Boolean);
-          if (pos && (pos.shares || []).every((x) => String(x) === '0') && String(pos.cost || '0') === '0') rememberPick(Object.assign({}, p, { unfilled: true }));
+          const empty = (x) => !!x && (x.shares || []).every((v) => String(v) === '0') && String(x.cost || '0') === '0' && String(x.sellDebt || '0') === '0';
+          const unfilled = books.filter((b) => empty((b.positions || []).find((x) => x && x.entry === p.entryIdHex))).length >= 2;
+          if (unfilled !== !!p.unfilled) rememberPick(Object.assign({}, p, { unfilled }));
         }
-        for (const o of best ? [best] : []) {
+        let shown = null;
+        for (const o of ranked.filter((x, i) => i === 0 || hasRow(x))) {
           try {
             // EVERY KIND CHECKED HERE: an outcome attestation, a scalar market's value attestation, or a market on a
             // game's source result - whose committee this page derives from the chain itself (clientCommittee), never the seats' list
@@ -78,10 +89,13 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
                 const got = await ARENACLIENT.clientCommittee(sourceHex, source, p.nodes || [], { curve: window.ARENA_CURVE, compare: false, roles: ['settlement'] });
                 return got && got.ok ? got.committees.settlement.map((k) => ARENACLIENT.toHex(k)) : null;
               } }) : (o.attestation ? await ARENACLIENT.checkAttestation({ attestationHex: o.attestation, market, roundIdHex: p.roundIdHex }) : undefined);
-            MARKET_OUTCOMES.set(p.roundIdHex, o);
-            break;
+            if (o.check && o.check.verified) { MARKET_OUTCOMES.set(p.roundIdHex, o); shown = null; break; }
+            if (!shown) shown = o;
           } catch { /* the next seat */ }
         }
+        // none verified: the first answer is shown unverified - never in place of a verified one this page holds
+        const held = MARKET_OUTCOMES.get(p.roundIdHex);
+        if (shown && !(held && held.check && held.check.verified)) MARKET_OUTCOMES.set(p.roundIdHex, shown);
         // WHAT THE BOOK PAYS THIS ORDER (kanban #2902, feedback #140): an order book round is settled by its book, not by the
         // pari-mutuel table - with a sell the pick's side alone no longer says won or lost. Once the outcome is verified, the round's
         // book is read from its seats and settled here by the protocol's rule (ARENACLIENT.bookClaimOf: two seats' identical books)

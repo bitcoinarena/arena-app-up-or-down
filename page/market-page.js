@@ -269,7 +269,10 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
       // closed more than 10 minutes ago is not listed as "waiting" (or as not yet in the table) while its result is being read - for
       // at most a minute after it was read back, so an order whose result cannot be read still shows
       const picks = readPicks().filter((p) => !ids || ids.has(String(p.gameId || '').toLowerCase()))
-        .map((p) => Object.assign({}, p, { market: marketOfPick(p) })).filter((p) => p.market);
+        .map((p) => Object.assign({}, p, { market: marketOfPick(p) },
+          // kanban #3009: whether an unmatched order's stake is credited yet - the row says "refund in transit" until it is
+          p.unfilled && window.ARENA_STAKE_CREDITED ? { stakeBack: window.ARENA_STAKE_CREDITED(p.roundIdHex, Number(p.order && p.order.index) || 0) } : {}))
+        .filter((p) => p.market);
       // AND AN ORDER WHOSE WINDOW CLOSED BEFORE THIS PAGE LOADED, until its outcome was asked once (quietOrders, 2026-10-20)
       try {
         const all = ARENACLIENT.marketLines({ picks, outcomes: MARKET_OUTCOMES, nowMs: Date.now() });

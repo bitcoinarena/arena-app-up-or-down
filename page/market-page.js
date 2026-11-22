@@ -44,7 +44,7 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
         // the signer nodes' table" and stayed "waiting for the result"): every seat asked at once, the answer holding this pick's
         // entry kept, else the fullest; a final, verified answer is kept for good only once it holds the row
         const hasRow = (o) => !!(o && o.table && Array.isArray(o.table.rows) && o.table.rows.some((x) => x.entryId === p.entryIdHex));
-        if (had && had.state === 'ATTESTED' && had.final && had.check && had.check.verified && (hasRow(had) || !p.entryIdHex)) continue;
+        if (had && had.state === 'ATTESTED' && had.final && had.check && had.check.verified && (hasRow(had) || !p.entryIdHex) && (had.agreedBy || 0) >= 2) continue;
         const market = marketOfPick(p);
         // a market this page cannot read is asked no more - and its orders are not kept out of sight for it (quietOrders)
         if (!market) { OUTCOMES_READ.add(p.roundIdHex); continue; }
@@ -52,7 +52,20 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
           .then((r) => (r.ok ? r.json() : null)).catch(() => null)))).filter(Boolean);
         OUTCOMES_READ.add(p.roundIdHex);
         const rowsOf = (o) => (o && o.table && Array.isArray(o.table.rows) ? o.table.rows.length : -1);
-        const best = answers.find(hasRow) || answers.sort((a, b) => rowsOf(b) - rowsOf(a))[0];
+        // THE TABLE THE MOST SEATS SERVE BYTE FOR BYTE (bitcoin-arena kanban #3019): the first answer holding the row was kept, and one seat listed
+        // first served the real, public attestation (it verifies) with a table of the player's row alone - no losers, a losing pool of 0 - so the
+        // verified winner read "nobody took the other side - refunded" and, since #3009, the order counted as refund-only. Each answer now carries how
+        // many seats served its table byte for byte (agreedBy); a table at least two seats agree on is checked before any other, the most agreed
+        // first, and an answer is kept for good only with that agreement - one seat's table is never preferred to one two or more seats serve
+        const tableKey = (o) => (o && o.table && typeof o.table === 'object' ? JSON.stringify(o.table) : null);
+        const served = new Map();
+        for (const o of answers) { const k = tableKey(o); if (k !== null) served.set(k, (served.get(k) || 0) + 1); }
+        for (const o of answers) { const k = tableKey(o); o.agreedBy = k === null ? 0 : served.get(k); }
+        const agreed = (o) => (o.agreedBy >= 2 ? o.agreedBy : 0);
+        // on this pin the answers holding the row still come first (18:05Z above), the most agreed of them first; then the rest, the same way
+        const byAgreement = (list) => list.map((o, i) => ({ o, i })).sort((a, b) => (agreed(b.o) - agreed(a.o)) || (a.i - b.i)).map((x) => x.o);
+        const ranked = [...byAgreement(answers.filter(hasRow)), ...byAgreement(answers.filter((o) => !hasRow(o)).sort((a, b) => rowsOf(b) - rowsOf(a)))];
+        const best = ranked[0];
         // NO ROW ANYWHERE, ITS ROUND CLOSED: an order that matched nobody has no row - the table holds filled positions
         // only. Its position read from the round's book: 0 shares and 0 cost is an order that matched nobody, its stake back whole
         if (best && best.state === 'ATTESTED' && !hasRow(best) && p.entryIdHex && !p.unfilled && Date.now() > Number(p.entryCloseMs) + 5000) {
@@ -77,7 +90,9 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
                 const got = await ARENACLIENT.clientCommittee(sourceHex, source, p.nodes || [], { curve: window.ARENA_CURVE, compare: false, roles: ['settlement'] });
                 return got && got.ok ? got.committees.settlement.map((k) => ARENACLIENT.toHex(k)) : null;
               } }) : (o.attestation ? await ARENACLIENT.checkAttestation({ attestationHex: o.attestation, market, roundIdHex: p.roundIdHex }) : undefined);
-            MARKET_OUTCOMES.set(p.roundIdHex, o);
+            // never in place of a verified table more seats agreed on (#3019)
+            const before = MARKET_OUTCOMES.get(p.roundIdHex);
+            if (!(before && before.check && before.check.verified && agreed(before) > agreed(o))) MARKET_OUTCOMES.set(p.roundIdHex, o);
             break;
           } catch { /* the next seat */ }
         }

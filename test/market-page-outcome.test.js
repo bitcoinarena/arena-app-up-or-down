@@ -81,3 +81,18 @@ test('#239 an unfilled verdict is read again: a row that shows up later takes it
   await P.ctx.readMarketOutcomes();
   assert.ok(!P.picks()[0].unfilled, 'the order stayed unfilled though a seat\'s table holds its row');
 });
+
+test('#3019 one seat\'s table without the losers\' rows is not kept over the table three seats serve byte for byte', async () => {
+  const loser = { entryId: 'ee'.repeat(32), won: false };
+  const honest = () => answer('good', [row, loser]);
+  const seats = { 'http://s1': { outcome: answer('good', [row]) }, 'http://s2': { outcome: honest() }, 'http://s3': { outcome: honest() }, 'http://s4': { outcome: honest() } };
+  const P = page(seats, pickOf(Object.keys(seats)));
+  await P.ctx.readMarketOutcomes();
+  const got = P.ctx.ARENA_MARKET_OUTCOMES.get(ROUND);
+  assert.equal(got.table.rows.length, 2, 'the kept table is the one the most seats agree on, the losers\' row in it');
+  assert.equal(got.agreedBy, 3);
+  // and one lying seat alone, read later, does not replace it
+  seats['http://s2'].outcome = seats['http://s3'].outcome = seats['http://s4'].outcome = undefined;
+  await P.ctx.readMarketOutcomes();
+  assert.equal(P.ctx.ARENA_MARKET_OUTCOMES.get(ROUND).table.rows.length, 2);
+});

@@ -45,7 +45,7 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
         // the signer nodes' table" and stayed "waiting for the result"): every seat asked at once, the answer holding this pick's
         // entry kept, else the fullest; a final, verified answer is kept for good only once it holds the row
         const hasRow = (o) => !!(o && o.table && Array.isArray(o.table.rows) && o.table.rows.some((x) => x.entryId === p.entryIdHex));
-        if (had && had.state === 'ATTESTED' && had.final && had.check && had.check.verified && (hasRow(had) || !p.entryIdHex) && (!p.order || p.bookClaim || (p.bookTries || 0) >= BOOK_TRIES || !ARENACLIENT.bookClaimOf)) continue;
+        if (had && had.state === 'ATTESTED' && had.final && had.check && had.check.verified && (hasRow(had) || !p.entryIdHex) && (had.agreedBy || 0) >= 2 && (!p.order || p.bookClaim || (p.bookTries || 0) >= BOOK_TRIES || !ARENACLIENT.bookClaimOf)) continue;
         const market = marketOfPick(p);
         // a market this page cannot read is asked no more - and its orders are not kept out of sight for it (quietOrders)
         if (!market) { OUTCOMES_READ.add(p.roundIdHex); continue; }
@@ -57,7 +57,18 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
         // on a bad answer, it says { verified: false } - and the first seat's answer alone was checked and kept, so one seat with an
         // unverifiable answer held the result and the book claim back for good while the others held a verifiable one. The answers with
         // the row first, in seat order, then the rest, fullest first; the first verified one is kept
-        const ranked = [...answers.filter(hasRow), ...answers.filter((o) => !hasRow(o)).sort((a, b) => rowsOf(b) - rowsOf(a))];
+        // THE TABLE THE MOST SEATS SERVE BYTE FOR BYTE (bitcoin-arena kanban #3019): the first answer holding the row was kept, and one seat listed
+        // first served the real, public attestation (it verifies) with a table of the player's row alone - no losers, a losing pool of 0 - so the
+        // verified winner read "nobody took the other side - refunded" and, since #3009, the order counted as refund-only. Each answer now carries how
+        // many seats served its table byte for byte (agreedBy); a table at least two seats agree on is checked before any other, the most agreed
+        // first, and an answer is kept for good only with that agreement - one seat's table is never preferred to one two or more seats serve
+        const tableKey = (o) => (o && o.table && typeof o.table === 'object' ? JSON.stringify(o.table) : null);
+        const served = new Map();
+        for (const o of answers) { const k = tableKey(o); if (k !== null) served.set(k, (served.get(k) || 0) + 1); }
+        for (const o of answers) { const k = tableKey(o); o.agreedBy = k === null ? 0 : served.get(k); }
+        const agreed = (o) => (o.agreedBy >= 2 ? o.agreedBy : 0);
+        const ranked = [...answers.filter(hasRow), ...answers.filter((o) => !hasRow(o)).sort((a, b) => rowsOf(b) - rowsOf(a))]
+          .map((o, i) => ({ o, i })).sort((a, b) => (agreed(b.o) - agreed(a.o)) || (a.i - b.i)).map((x) => x.o);
         const best = ranked[0];
         // NO ROW ANYWHERE, ITS ROUND CLOSED: an order that matched nobody has no row - the table holds filled positions
         // only. Its position read from the round's books: 0 shares, 0 cost and no sell debt at two seats is an order that matched
@@ -89,7 +100,12 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
                 const got = await ARENACLIENT.clientCommittee(sourceHex, source, p.nodes || [], { curve: window.ARENA_CURVE, compare: false, roles: ['settlement'] });
                 return got && got.ok ? got.committees.settlement.map((k) => ARENACLIENT.toHex(k)) : null;
               } }) : (o.attestation ? await ARENACLIENT.checkAttestation({ attestationHex: o.attestation, market, roundIdHex: p.roundIdHex }) : undefined);
-            if (o.check && o.check.verified) { MARKET_OUTCOMES.set(p.roundIdHex, o); shown = null; break; }
+            if (o.check && o.check.verified) {
+              // never in place of a verified table more seats agreed on (#3019)
+              const before = MARKET_OUTCOMES.get(p.roundIdHex);
+              if (!(before && before.check && before.check.verified && agreed(before) > agreed(o))) MARKET_OUTCOMES.set(p.roundIdHex, o);
+              shown = null; break;
+            }
             if (!shown) shown = o;
           } catch { /* the next seat */ }
         }

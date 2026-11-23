@@ -87,3 +87,7 @@ export const UPDOWN_CLIENT_V23_HASH = createHash('sha256').update(readFileSync(U
 // shown as loading, and no minus on a zero loss (bitcoin-arena kanban #2836, feedback #084)
 export const UPDOWN_CLIENT_V25_FILE = new URL('../client/index-v25.html', import.meta.url);
 export const UPDOWN_CLIENT_V25_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V25_FILE)).digest();
+// version 26: version 25 with a locked order's line saying when the window closes, no cancel for an order past its expiry, and no Buy in a
+// window the seats have not got ready (bitcoin-arena kanban #3079, #3080, #3075; feedback #358, #359, #351)
+export const UPDOWN_CLIENT_V26_FILE = new URL('../client/index-v26.html', import.meta.url);
+export const UPDOWN_CLIENT_V26_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V26_FILE)).digest();

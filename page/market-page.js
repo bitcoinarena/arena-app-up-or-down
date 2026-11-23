@@ -114,24 +114,39 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
     // THE ROUNDS THAT TOOK ORDERS LATELY, from the seats (GET /market-rounds, the last 24 h): asked once a minute, each round's
     // contract fetched once by its id (fetchRound: it hashes to the id) - an order of this wallet in a round that closed while no tab
     // of it was open is read back from there
-    const MARKET_ROUNDS = new Map();   // id -> contract, or null when it could not be read
-    const MARKET_ROUNDS_PER_SEAT = 200, MARKET_ROUNDS_KEPT = 2000;   // kanban #3368
-    let marketRoundsAt = 0;
+    // ONE SEAT'S ANSWER IS READ UP TO THE DOOR'S OWN 200 ROWS (kanban #3368, audit attest a6-3-1): one seat listing 3,000 made-up ids made the
+    // page fetch each from every seat in turn (12,000 GET /round) ahead of the order restore, and kept every one for good.
+    // AND THE READ IS SMALL, SHORT AND NOT IN FRONT OF THE RESTORE (#3368, the seat that holds its GET /round open): 200 new rounds a pass, each
+    // asked of every seat in turn with fetchRound's 30 s read, let one seat listed first hold the restore some 25 minutes a pass. Now the ids
+    // more seats list go first, at most MARKET_ROUNDS_PER_PASS are fetched a pass, 4 at a time, each read MARKET_ROUND_READ_MS; an id no seat
+    // could hand is kept apart (MARKET_ROUNDS_UNREAD), so made-up ids never push the real contracts out; the restore waits at most 5 s for it
+    const MARKET_ROUNDS = new Map();          // id -> contract read and checked (fetchRound: it hashes to the id)
+    const MARKET_ROUNDS_UNREAD = new Set();   // ids no seat handed a contract for: not asked again while kept
+    const MARKET_ROUNDS_PER_SEAT = 200, MARKET_ROUNDS_KEPT = 2000, MARKET_ROUNDS_PER_PASS = 24, MARKET_ROUND_READ_MS = 8000;
+    const keepBounded = (c, max) => { while (c.size > max) c.delete(c.keys().next().value); };
+    let marketRoundsAt = 0, marketRoundsRead = null;
     async function recentMarketRounds(nodes) {
       if (Date.now() - marketRoundsAt < 60000) return;
       marketRoundsAt = Date.now();
       const since = Date.now() - 24 * 3600 * 1000;
       const said = await Promise.all(nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/market-rounds?since=' + since, { cache: 'no-store', signal: AbortSignal.timeout(6000) })
         .then((r) => (r.ok ? r.json() : null)).catch(() => null)));
-      // ONE SEAT'S ANSWER IS READ UP TO THE DOOR'S OWN 200 ROWS, AND A PASS FETCHES AT MOST 200 NEW ROUNDS, 4 AT A TIME (kanban #3368, audit
-      // attest a6-3-1): one seat listing 3,000 made-up ids made the page fetch each from every seat in turn (12,000 GET /round) ahead of the
-      // order restore, and kept every one for good. MARKET_ROUNDS keeps the newest MARKET_ROUNDS_KEPT
-      const ids = new Set(said.flatMap((x) => (x && Array.isArray(x.rounds) ? x.rounds.slice(0, MARKET_ROUNDS_PER_SEAT).map((r) => String(r && r.round)) : [])).filter((id) => /^[0-9a-f]{64}$/.test(id)));
-      const fresh = [...ids].filter((id) => !MARKET_ROUNDS.has(id)).slice(0, MARKET_ROUNDS_PER_SEAT);
+      // how many seats list each id, and where it first stood (each answer newest first)
+      const seen = new Map();
+      for (const x of said) {
+        const ids = new Set((x && Array.isArray(x.rounds) ? x.rounds.slice(0, MARKET_ROUNDS_PER_SEAT) : []).map((r) => String(r && r.round)).filter((id) => /^[0-9a-f]{64}$/.test(id)));
+        let at = 0;
+        for (const id of ids) { const s = seen.get(id); if (s) { s.seats++; s.at = Math.min(s.at, at); } else seen.set(id, { seats: 1, at }); at++; }
+      }
+      const fresh = [...seen].filter(([id]) => !MARKET_ROUNDS.has(id) && !MARKET_ROUNDS_UNREAD.has(id))
+        .sort((a, b) => (b[1].seats - a[1].seats) || (a[1].at - b[1].at)).slice(0, MARKET_ROUNDS_PER_PASS).map(([id]) => id);
+      const fetcher = (u, o) => fetch(u, Object.assign({}, o, { signal: AbortSignal.timeout(MARKET_ROUND_READ_MS) }));
       await inBatches(fresh, 4, async (id) => {
-        try { MARKET_ROUNDS.set(id, (await ARENACLIENT.fetchRound(id, nodes)).contract || null); } catch { MARKET_ROUNDS.set(id, null); }
+        let contract = null;
+        try { contract = (await ARENACLIENT.fetchRound(id, nodes, { fetcher })).contract || null; } catch { contract = null; }
+        if (contract) { MARKET_ROUNDS.set(id, contract); keepBounded(MARKET_ROUNDS, MARKET_ROUNDS_KEPT); }
+        else { MARKET_ROUNDS_UNREAD.add(id); keepBounded(MARKET_ROUNDS_UNREAD, MARKET_ROUNDS_KEPT); }
       });
-      while (MARKET_ROUNDS.size > MARKET_ROUNDS_KEPT) MARKET_ROUNDS.delete(MARKET_ROUNDS.keys().next().value);
     }
     window.ARENA_RESTORED_ORDERS = [];
     // A CLOSED ROUND IS READ ONCE (nothing new can enter it), AND AT MOST 4 ROUNDS AT ONCE (measured 2026-10-23 16:2xZ with 20
@@ -153,7 +168,10 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
       const sideRow = listed.find((r) => r && r.contract && ARENACLIENT.toHex(r.contract.gameId) === String(G.game.id));
       const sideNodes = sideRow && window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(sideRow.id) : [];
       if (sideNodes.length) {
-        try { await recentMarketRounds(sideNodes); } catch { /* the next minute */ }
+        // NOT IN FRONT OF THE RESTORE (#3368): the rounds this page knows are read now; a read of new ones that takes longer than 5 s goes
+        // on beside it, and what it finds is read on the next pass
+        if (!marketRoundsRead) marketRoundsRead = recentMarketRounds(sideNodes).catch(() => { /* the next minute */ }).finally(() => { marketRoundsRead = null; });
+        await Promise.race([marketRoundsRead, new Promise((ok) => setTimeout(ok, 5000))]);
         const have = new Set(listed.map((r) => r && r.id));
         for (const [id, contract] of MARKET_ROUNDS) if (contract && !have.has(id)) listed.push({ id, contract, free: false, nodes: sideNodes });
       }

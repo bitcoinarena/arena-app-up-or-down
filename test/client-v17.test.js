@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { buildV17, FORBIDDEN } from '../tools/build-client-v17.mjs';
+import { buildV17, FORBIDDEN, OWNER_NAME } from '../tools/build-client-v17.mjs';
 import { MANIFEST_V16, GAME_ID_V16 } from '../plugin/btc-updown-v16.js';
 import { MANIFEST_V17, GAME_ID_V17, GAME } from '../plugin/btc-updown-v17.js';
 import { manifestStands } from 'arena-sdk/manifest';
@@ -25,9 +25,11 @@ test('no ticket number, name or old project name left; only the lines that carri
   const a = V16.split('\n'), b = V17.split('\n');
   assert.equal(a.length, b.length);
   assert.deepEqual(b.map((l, i) => [i + 1, l]).filter(([, l]) => FORBIDDEN.test(l)), []);
+  assert.equal(new RegExp(OWNER_NAME.source).test(V17), false, 'the owner\'s name is left in version 17');
   const changed = a.map((l, i) => [l, b[i]]).filter(([x, y]) => x !== y);
   assert.ok(changed.length > 0);
-  for (const [was] of changed) assert.match(was, FORBIDDEN, 'a line changed that carried nothing to clean');
+  // a line that carried the owner's name is cleaned too (bitcoin-arena kanban #3078)
+  for (const [was] of changed) assert.ok(FORBIDDEN.test(was) || new RegExp(OWNER_NAME.source).test(was), 'a line changed that carried nothing to clean: ' + was.slice(0, 80));
 });
 
 test('the manifest stands on version 16, its developer\'s, and pins this file beside the older clients', () => {

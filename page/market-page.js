@@ -115,6 +115,7 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
     // contract fetched once by its id (fetchRound: it hashes to the id) - an order of this wallet in a round that closed while no tab
     // of it was open is read back from there
     const MARKET_ROUNDS = new Map();   // id -> contract, or null when it could not be read
+    const MARKET_ROUNDS_PER_SEAT = 200, MARKET_ROUNDS_KEPT = 2000;   // kanban #3368
     let marketRoundsAt = 0;
     async function recentMarketRounds(nodes) {
       if (Date.now() - marketRoundsAt < 60000) return;
@@ -122,11 +123,15 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
       const since = Date.now() - 24 * 3600 * 1000;
       const said = await Promise.all(nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/market-rounds?since=' + since, { cache: 'no-store', signal: AbortSignal.timeout(6000) })
         .then((r) => (r.ok ? r.json() : null)).catch(() => null)));
-      const ids = new Set(said.flatMap((x) => (x && Array.isArray(x.rounds) ? x.rounds.map((r) => String(r.round)) : [])).filter((id) => /^[0-9a-f]{64}$/.test(id)));
-      for (const id of ids) {
-        if (MARKET_ROUNDS.has(id)) continue;
+      // ONE SEAT'S ANSWER IS READ UP TO THE DOOR'S OWN 200 ROWS, AND A PASS FETCHES AT MOST 200 NEW ROUNDS, 4 AT A TIME (kanban #3368, audit
+      // attest a6-3-1): one seat listing 3,000 made-up ids made the page fetch each from every seat in turn (12,000 GET /round) ahead of the
+      // order restore, and kept every one for good. MARKET_ROUNDS keeps the newest MARKET_ROUNDS_KEPT
+      const ids = new Set(said.flatMap((x) => (x && Array.isArray(x.rounds) ? x.rounds.slice(0, MARKET_ROUNDS_PER_SEAT).map((r) => String(r && r.round)) : [])).filter((id) => /^[0-9a-f]{64}$/.test(id)));
+      const fresh = [...ids].filter((id) => !MARKET_ROUNDS.has(id)).slice(0, MARKET_ROUNDS_PER_SEAT);
+      await inBatches(fresh, 4, async (id) => {
         try { MARKET_ROUNDS.set(id, (await ARENACLIENT.fetchRound(id, nodes)).contract || null); } catch { MARKET_ROUNDS.set(id, null); }
-      }
+      });
+      while (MARKET_ROUNDS.size > MARKET_ROUNDS_KEPT) MARKET_ROUNDS.delete(MARKET_ROUNDS.keys().next().value);
     }
     window.ARENA_RESTORED_ORDERS = [];
     // A CLOSED ROUND IS READ ONCE (nothing new can enter it), AND AT MOST 4 ROUNDS AT ONCE (measured 2026-10-23 16:2xZ with 20

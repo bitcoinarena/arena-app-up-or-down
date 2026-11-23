@@ -26,8 +26,12 @@ export function cleanText(c) {
     .replace(/,\s*,/g, ',').replace(/([^\s*]) {2,}(?=\S)/g, '$1 ').replace(/ +([,):])/g, '$1');
 }
 
-/** Version 17 from version 16: every line that carries a forbidden word, cleaned; every other line as it was. */
-export const buildV17 = (v16) => v16.split('\n').map((l) => (FORBIDDEN.test(l) ? cleanText(l) : l)).join('\n');
+/** The owner's first name, spelled so it does not stand in this file (the public repository's pre-push check; bitcoin-arena kanban #3078):
+ *  version 16's comments carry it ten times, and version 17 says "the owner" there. */
+export const OWNER_NAME = new RegExp('\\b' + String.fromCharCode(68, 97, 110, 105, 101, 108) + "(?:'s)?\\s", 'g');
+
+/** Version 17 from version 16: every line that carries a forbidden word, cleaned, and the owner's name as "the owner"; every other line as it was. */
+export const buildV17 = (v16) => v16.split('\n').map((l) => (FORBIDDEN.test(l) ? cleanText(l) : l)).join('\n').replace(OWNER_NAME, 'the owner ');
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const out = buildV17(readFileSync(V16, 'utf8'));

@@ -9,6 +9,14 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
     // ---------------------------------------------------------------- markets (§0A.7a)
     // THE PICK THE SHEET CHOSE, read by the join it starts: { round, pick, gameId, confirmed, manifestHex }
     window.ARENA_PICK_CHOSEN = null;
+    // A ROUND OF THE SHOWN GAME, ANY VERSION OF IT (bitcoin-arena kanban #3668, feedback #456: round ed43c013 ran on Up/Down v24 while the page
+    // showed v26, and the orders read back from the seats were read only in rounds of the shown version): the page's ARENA_GAME_FAMILY (its tile's
+    // versions, same developer key and name); the shown id alone when the page names none
+    function ofShownGame(gameIdHex) {
+      const family = Array.isArray(window.ARENA_GAME_FAMILY) && window.ARENA_GAME_FAMILY.length ? window.ARENA_GAME_FAMILY : [window.ARENA_GAME && window.ARENA_GAME.game.id];
+      const id = String(gameIdHex || '').toLowerCase();
+      return !!id && family.some((x) => String(x || '').toLowerCase() === id);
+    }
     function pickFor(roundIdHex) { const c = window.ARENA_PICK_CHOSEN; return c && c.round === roundIdHex ? c : null; }
     // an unpinned market the player confirmed a second time on the sheet (§0A.6): only that game, only for that join
     function confirmedMarkets() { const c = window.ARENA_PICK_CHOSEN; return c && c.confirmed ? new Set([c.gameId]) : null; }
@@ -202,7 +210,8 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
       // the rounds the lobby lists, and those just closed that the seats still list (an order there has its result to show)
       const listed = [...(window.ARENA_LOBBY_ROWS || []), ...(window.ARENA_LOBBY_CLOSED || []).map((c) => ({ id: c.id, contract: c.contract, free: false }))];
       // the seats of this game's side (those of a round of it listed now), and the rounds that took orders on them lately
-      const sideRow = listed.find((r) => r && r.contract && ARENACLIENT.toHex(r.contract.gameId) === String(G.game.id));
+      const sideRow = listed.find((r) => r && r.contract && ARENACLIENT.toHex(r.contract.gameId) === String(G.game.id))
+        || listed.find((r) => r && r.contract && ofShownGame(ARENACLIENT.toHex(r.contract.gameId)));   // #3668: else a round of another version of it
       const sideNodes = sideRow && window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(sideRow.id) : [];
       if (sideNodes.length) {
         // NOT IN FRONT OF THE RESTORE (#3368): the rounds this page knows are read now; a read of new ones that takes longer than 5 s goes
@@ -213,7 +222,7 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
         for (const [id, contract] of MARKET_ROUNDS) if (contract && !have.has(id)) listed.push({ id, contract, free: false, nodes: sideNodes });
       }
       const rows = listed.filter((r) => r && !r.free && r.contract && ARENACLIENT.roundPays && ARENACLIENT.roundPays(r.contract) !== false
-        && ARENACLIENT.marketForRound && ARENACLIENT.marketForRound(r.contract) && ARENACLIENT.toHex(r.contract.gameId) === String(G.game.id));
+        && ARENACLIENT.marketForRound && ARENACLIENT.marketForRound(r.contract) && ofShownGame(ARENACLIENT.toHex(r.contract.gameId)));   // #3668: every version's rounds
       // THE ROUNDS SIDE BY SIDE, THEIR ENTRIES TOO (measured live 2026-10-17 ~21:10Z, UI 210: a wallet's 14 orders in 9
       // rounds appeared 15-35 s after the page loaded - every round's book, then every entry in it, each player's, was read after the
       // one before, each from the first seat that answered): every round at once, and a round's entries at once, each asked first of a

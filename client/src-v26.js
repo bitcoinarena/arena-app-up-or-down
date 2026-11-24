@@ -8,6 +8,28 @@ const sats = (n) => Math.floor(n).toLocaleString('en-US') + ' sats';
 const hhmm = (ms) => new Date(ms).toISOString().slice(11, 16);
 const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 // <history> (version 15's block, placed here by the tool)
+// <past-3666> WHEN A PAST ORDER IS FINAL (bitcoin-arena kanban #3666, feedback #451: a refund of 20 Nov still said "pending" four days later, and
+// the summary read "3 closed · 1 pending" with the pending row among the 3): a kept order was final only by `final` or a `finalAtMs` passed, and its
+// summary is refreshed only while the order is in the live list - a refund kept with final false and no finalAtMs stayed pending for good. Now
+// - a refund or void whose stake is back (not "in transit", no objection window running) is final: nothing more can change it;
+// - a kept row no longer in the live list an hour after its window closed (the objection window is 10 minutes) is final;
+// - the summary's "closed" counts the final rows, the pending ones apart.
+const PAST = (() => {
+  const SETTLED_MS = 60 * 60000;
+  /** each past row marked with whether it is in the live list now (`live`) and whether its refund is still on its way (`inTransit`) */
+  const mark = (past, closed) => {
+    const live = new Map(closed.map(({ o, l }) => [o.entry, !!(l && l.inTransit)]));
+    return past.map((p) => ({ ...p, live: live.has(p.entry), inTransit: live.has(p.entry) ? live.get(p.entry) : !!p.inTransit }));
+  };
+  const counting = (p, now) => !!p.finalAtMs && now < p.finalAtMs;
+  const isFinal = (p, now) => HISTORY.isFinal(p, now)
+    || ((p.state === 'refunded' || p.state === 'void') && !p.inTransit && !counting(p, now))
+    || (!p.live && now >= Number(p.closeMs) + SETTLED_MS && !counting(p, now));
+  const statusLine = (p, now) => (isFinal(p, now) ? 'final' : counting(p, now) ? HISTORY.statusLine(p, now) : 'pending');
+  const counts = (past, now) => { const pend = past.filter((p) => !isFinal(p, now)).length; return { closed: past.length - pend, pend }; };
+  return { mark, isFinal, statusLine, counts };
+})();
+// </past-3666>
 
 // EVERYTHING ON THE SCREEN IS REACT'S (version 16): the view (view/UpDownView.jsx, inlined above) is handed one view model at every draw
 // and every press and keystroke comes back through `on`; this script keeps the market - its rows, the book, the prices, the orders and
@@ -234,9 +256,10 @@ if (!A || !A.market) {
     const timingOf = new Map(mine.filter((o) => o.timing && Object.keys(o.timing).length).map((o) => [o.entry, o.timing]));
     // and the times kept with a past order stay with it when the live order comes back without them (version 23: after a reload)
     const keptTiming = new Map((Array.isArray(kept) ? kept : []).filter((p) => p && p.timing && Object.keys(p.timing).length).map((p) => [p.entry, p.timing]));
-    const past = HISTORY.merge(kept, closed, now).map((p) => (timingOf.has(p.entry) ? { ...p, timing: timingOf.get(p.entry) } : keptTiming.has(p.entry) ? { ...p, timing: keptTiming.get(p.entry) } : p));
+    // #3666: each row marked with whether it is in the live list and whether its refund is still on its way
+    const past = PAST.mark(HISTORY.merge(kept, closed, now), closed).map((p) => (timingOf.has(p.entry) ? { ...p, timing: timingOf.get(p.entry) } : keptTiming.has(p.entry) ? { ...p, timing: keptTiming.get(p.entry) } : p));
     try { window.localStorage.setItem(PAST_KEY, JSON.stringify(past)); } catch { /* private window: this tab's only */ }
-    const resultLine = (p) => HISTORY.resultLine(p, outcomes), isFinal = (p) => HISTORY.isFinal(p, now), statusLine = (p) => HISTORY.statusLine(p, now);
+    const resultLine = (p) => HISTORY.resultLine(p, outcomes), isFinal = (p) => PAST.isFinal(p, now), statusLine = (p) => PAST.statusLine(p, now);
     const pastRows = past.map((p) => ({ entry: p.entry, side: p.side, window: win(p.closeMs), final: isFinal(p), status: statusLine(p), stake: satsOf(p.stakeMsat),
       limit: p.limit, result: resultLine(p), pl: HISTORY.plLine(p), plCls: HISTORY.plCls(p), timing: p.timing || null }));
     // MY SHARES AND MY SELLS (version 18): the window's shares per side, and each sell of an open window as a card
@@ -266,8 +289,10 @@ if (!A || !A.market) {
     const won = past.reduce((t, p) => t + (p.pnlMsat > 0 ? p.pnlMsat : 0), 0);
     const lost = past.reduce((t, p) => t + (p.pnlMsat < 0 ? -p.pnlMsat : 0), 0);
     const num = (msat) => Math.floor(Math.abs(Number(msat)) / 1000).toLocaleString('en-US');
-    const totals = { count: past.length, won: satsOf(won), lost: satsOf(lost), net: satsOf(Math.abs(won - lost)), netMsat: won - lost,
-      wonNum: num(won), lostNum: num(lost), netNum: num(won - lost), pend: past.filter((p) => !isFinal(p)).length };
+    // #3666: "closed" counts the final rows only; the pending ones are said apart
+    const counted = PAST.counts(past, now);
+    const totals = { count: counted.closed, won: satsOf(won), lost: satsOf(lost), net: satsOf(Math.abs(won - lost)), netMsat: won - lost,
+      wonNum: num(won), lostNum: num(lost), netNum: num(won - lost), pend: counted.pend };
     VIEW.kind(card.kind);
     const sideCents = (i) => { const b = bestOf(i); return dir === 'sell' ? (b.bid !== null ? b.bid : priceOf(i)) : priceOf(i); };
     // BEFORE THE BOOK IS READ THE PRICE IS NOT KNOWN (version 25, #084): 50% / 50¢ is a placeholder, shown as loading, never as a price

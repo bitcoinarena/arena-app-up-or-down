@@ -198,10 +198,13 @@ if (!A || !A.market) {
     const now = Date.now();
     if (current) {
       const start = current.entryCloseMs - PERIOD_MS;
-      const d = live.now !== null && live.beat !== null && now >= start ? live.now - live.beat : null;
+      // bitcoin-arena kanban #3611 (feedback #444): the beat is this window's only once read for it (live.beatFor) - the new window's candle
+      // arrives up to a minute late, and the card showed the previous window's beat and a delta against it until then
+      const beat = live.beatFor === current.id ? live.beat : null;
+      const d = live.now !== null && beat !== null && now >= start ? live.now - beat : null;
       card = { kind: current.free ? 'FREE' : 'PAID', q: `BTC up or down, ${hhmm(start)}–${hhmm(current.entryCloseMs)} UTC?`,
         left: (now < start ? 'opens in ' + mmss(start - now) + ', ' : '') + 'closes in ' + mmss(current.entryCloseMs - now),
-        poly: 'https://polymarket.com/event/btc-updown-15m-' + Math.floor(start / 1000), beat: now < start ? 'at ' + hhmm(start) : usd(live.beat), now: usd(live.now),
+        poly: 'https://polymarket.com/event/btc-updown-15m-' + Math.floor(start / 1000), beat: now < start ? 'at ' + hhmm(start) : beat === null ? 'reading…' : usd(beat), now: usd(live.now),
         delta: { text: d === null ? '–' : (d >= 0 ? '▲ ' : '▼ ') + usd(Math.abs(d)), color: d === null ? '' : d >= 0 ? 'var(--up)' : 'var(--down)' } };
     } else card = { ...card, q: 'No window is open on these nodes right now.' };
     const a = asked();

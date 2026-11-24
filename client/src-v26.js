@@ -45,9 +45,18 @@ if (!A || !A.market) {
   };
   // THE ORDER IN FLIGHT: the page's join and the pick it carries, said in the sheet and in My orders until the order is the page's
   let placing = null;
+  // VERSION 26 (bitcoin-arena kanban #3601, feedback #429, #432): an order attempt always ends visibly - a refusal stays said (in the sheet
+  // and as a 'not placed' row in My orders) until the next order, and a join the page dropped or replaced by another round's before the
+  // order went in ends it with 'not placed' and why; before, the row went after 20 s or at once, without a word
   function joinStatus() {
+    if (!placing) return null;
+    if (placing.end) return placing.end;
     const j = A.state().join;
-    if (!j || !placing || j.round !== placing.round) return null;
+    if (!j || j.round !== placing.round) {
+      if (placing.ok) { placing = null; return null; }
+      placing.end = { state: 'refused', line: 'Order not placed: ' + (j ? 'the page went on to another round before this order went in' : 'the page dropped the order before it went in'), cls: 'bad' };
+      return placing.end;
+    }
     let line, cls = '';
     const st = String(j.stage || ''), starts = /round starts in ([0-9:]+)/.exec(st);
     if (j.state === 'refused') { line = 'Order not placed: ' + (j.why || 'refused'); cls = 'bad'; }
@@ -55,9 +64,11 @@ if (!A || !A.market) {
     else if (j.state === 'joining' && starts) { line = '✓ Order locked · the window closes in ' + starts[1]; cls = 'ok'; }
     else if (j.state === 'joining') { line = 'Placing your order … ' + (/^stake lock/.test(st) ? 'locking your stake in the federation' : (st || 'asking the round\'s seats')); }
     else { line = '✓ Order placed'; cls = 'ok'; }
+    if (cls === 'bad') { placing.end = { state: j.state, line, cls }; return placing.end; }
+    if (cls) placing.ok = true;
     if (cls && !placing.doneAt) placing.doneAt = Date.now();
     if (!cls) placing.doneAt = 0;
-    if (placing.doneAt && Date.now() - placing.doneAt > (cls === 'bad' ? 20000 : 10000) && !starts) { placing = null; return null; }
+    if (placing.doneAt && Date.now() - placing.doneAt > 10000 && !starts) { placing = null; return null; }
     return { state: j.state, line, cls };
   }
   // THE PRICE OF UP: the last certified batch's, else 50¢; Down is 1 less it

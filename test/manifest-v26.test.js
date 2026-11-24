@@ -15,7 +15,7 @@ import { toHex } from 'arena-sdk/hash';
 const V26 = readFileSync(new URL('../client/index-v26.html', import.meta.url));
 
 test('the signed manifest stands on version 25 and adds only index-v26.html to its clients', () => {
-  assert.equal(toHex(GAME.gameId), '90d207d64b3c2ab565d43b0437b3ddf45a99f400f8fc104425174d059254e42e');
+  assert.equal(toHex(GAME.gameId), 'f8df58ed305a4f0ef36fcc9d6c8a2956ace5a85520c1ee69872d38e23fb8fc60');
   const stands = manifestStands(MANIFEST_V26, { verify: verifyEd25519, parentOf: (id) => (toHex(id) === toHex(GAME_ID_V25) ? MANIFEST_V25 : null) });
   assert.ok(stands.ok, stands.why);
   const v26 = createHash('sha256').update(V26).digest('hex');

@@ -48,3 +48,41 @@ test('#3075: no Buy in a window the seats have not got ready', () => {
   const ready = goOf(false, { joinable: true, free: false }, {}, false, null, ['Up', 'Down'], 0);
   assert.deepEqual(ready, { disabled: false, text: 'Buy Up' });
 });
+
+// bitcoin-arena kanban #3601 (feedback #429, #432): an order showed 'placing…' in My orders and then vanished, no word - the row lived only
+// while the page's join named its round, and a refusal was shown 20 s, then dropped. An order attempt now always ends visibly.
+const flightOf = (join, placing) => {
+  const a = UNDER.indexOf('  function joinStatus() {'), b = UNDER.indexOf('\n  }\n', a);
+  const state = { join };
+  const run = new Function('A', 'P', `let placing = P;\n${UNDER.slice(a, b + 4)}\nreturn () => joinStatus();`)({ state: () => state }, placing);
+  return { run, state };
+};
+test('#3601: a refused order stays said, also after 20 s', () => {
+  const placing = { round: 'r', doneAt: 0 };
+  const f = flightOf({ round: 'r', state: 'refused', why: 'this round is not open yet - nothing was paid' }, placing);
+  assert.equal(f.run().line, 'Order not placed: this round is not open yet - nothing was paid');
+  placing.doneAt = Date.now() - 120000;
+  const later = f.run();
+  assert.ok(later && later.cls === 'bad', 'the refusal was dropped after its 20 s');
+  assert.equal(later.line, 'Order not placed: this round is not open yet - nothing was paid');
+  f.state.join = null;
+  assert.equal((f.run() || {}).line, 'Order not placed: this round is not open yet - nothing was paid', 'the refusal went when the page cleared its join');
+});
+test('#3601: a join replaced by another round\'s ends the order with "not placed" and a reason', () => {
+  const f = flightOf({ round: 'r', state: 'joining', stage: 'finding the round in the lobby' }, { round: 'r', doneAt: 0 });
+  assert.equal(f.run().cls, '');
+  f.state.join = { round: 'other', state: 'joining', stage: '' };
+  const got = f.run();
+  assert.ok(got, 'the order in flight was dropped without a word');
+  assert.equal(got.cls, 'bad');
+  assert.match(got.line, /^Order not placed: .{10,}/);
+  f.state.join = null;
+  assert.equal((f.run() || {}).line, got.line, 'the line went when the page cleared its join');
+});
+test('#3601: a placed order still clears from the flight once its line has been shown', () => {
+  const placing = { round: 'r', doneAt: 0 };
+  const f = flightOf({ round: 'r', state: 'joined' }, placing);
+  assert.equal(f.run().line, '✓ Order placed');
+  placing.doneAt = Date.now() - 60000;
+  assert.equal(f.run(), null);
+});

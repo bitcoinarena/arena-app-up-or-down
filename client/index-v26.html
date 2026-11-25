@@ -256,6 +256,28 @@ const OPENING = (() => {
   return { line, button };
 })();
 // </opening-3709>
+// <expiry-3710> AN ORDER PAST ITS OWN EXPIRY IS NOT SHOWN AS OPEN (bitcoin-arena, feedback #471): a 6-sat limit order with
+// expiry "in 1 min" was still in My orders as open ("closes in …") two minutes on, and a market order's Cancel went after a minute with no word -
+// the only use of orderExpiryMs was the cancel. Now a row past its expiry says it expired (unfilled: its stake comes back when the window settles,
+// about 10 minutes after its close), and a row with an expiry to come counts it down. `filled`: the book holds shares of the entry (true), none
+// (false), or the book read is another window's (null).
+const EXPIRY = (() => {
+  const SETTLE_MS = 10 * 60000;
+  const expiryOf = (o) => Number(o.orderExpiryMs) || 0;
+  const expired = (o, l, now) => !o.cancelled && expiryOf(o) > 0 && expiryOf(o) <= now && o.entryCloseMs > now - SETTLE_MS * 6
+    && !(l && l.state && l.state !== 'open' && l.state !== 'unknown');
+  const chip = (o, l, now, filled) => {
+    const r = HISTORY.resultOf(o, l, now);
+    if (expired(o, l, now)) {
+      if (filled === false) return ['wait', `expired unfilled · stake back when the window settles (~${hhmm(Number(o.entryCloseMs) + SETTLE_MS)} UTC)`, '', '', 0];
+      return [r[0], `${r[1]} · ${filled ? 'the unfilled rest left the book' : 'expired: what did not fill left the book'}`, ...r.slice(2)];
+    }
+    if (r[0] === 'open' && expiryOf(o) > now) return ['open', `${r[1]} · expires in ${mmss(expiryOf(o) - now)}`, ...r.slice(2)];
+    return r;
+  };
+  return { expired, chip };
+})();
+// </expiry-3710>
 
 // EVERYTHING ON THE SCREEN IS REACT'S (version 16): the view (view/UpDownView.jsx, inlined above) is handed one view model at every draw
 // and every press and keystroke comes back through `on`; this script keeps the market - its rows, the book, the prices, the orders and
@@ -469,12 +491,15 @@ if (!A || !A.market) {
     const rows = mine.map((o) => ({ o, l: lineOf(o) })).reverse();
     const isClosed = ({ o, l }) => HISTORY.isClosed(o, l);
     const open = rows.filter((r) => !isClosed(r)), closed = rows.filter(isClosed);
+    // #3710: whether the book read holds shares of an order (null: the book read is another window's)
+    const filledOf = (o) => { if (!book || bookFor !== o.round) return null; const p = (book.positions || []).find((x) => x.entry === o.entry);
+      return !!(p && (p.shares || []).some((x) => Number(x) > 0)); };
     const openCards = open.map(({ o, l }) => {
       // VERSION 26 (bitcoin-arena, feedback #359): no cancel for an order past its own expiry - it left the book then
       const canCancel = !o.cancelled && o.entryCloseMs > Date.now() && !(Number(o.orderExpiryMs) > 0 && Number(o.orderExpiryMs) <= Date.now())
         && !(l && l.state && l.state !== 'open');
       return { key: o.entry, side: Number(o.pick), amount: satsOf(o.stakeMsat), limit: Math.round(o.limitPrice / TICK), window: win(o.entryCloseMs),
-        chip: HISTORY.resultOf(o, l, now), cancel: canCancel ? { entry: o.entry, busy: cancelling.has(o.entry) } : null, timing: o.timing || null, tx: o.entry };
+        chip: EXPIRY.chip(o, l, now, filledOf(o)), cancel: canCancel ? { entry: o.entry, busy: cancelling.has(o.entry) } : null, timing: o.timing || null, tx: o.entry };
     });
     // PAST ORDERS, KEPT IN THIS BROWSER (version 9): each closed order's summary - no key, no secret - merged with the tab's live ones
     let kept = []; try { kept = JSON.parse(window.localStorage.getItem(PAST_KEY) || '[]'); } catch { kept = []; }
@@ -532,7 +557,9 @@ if (!A || !A.market) {
         : 'A sell stays in the book until it fills or the window closes; you are paid when the market resolves.',
       shares: shareRows, sells: sellCards, cancelAll: cancellable.length > 1 ? { busy: cancellingAll } : null,
       mwin: a.why || a.noSeller ? '–' : sats(a.win), mprice: a.why ? '' : a.noSeller ? 'no seller yet: your order waits up to 60 s for one'
-        : 'at ' + (a.top > bestOf(pick).ask ? bestOf(pick).ask + '–' + a.top : bestOf(pick).ask) + '¢' + (a.short ? `; only ${a.win.toLocaleString('en-US')} shares rest up to ${a.limitCents}¢ now: the rest may fill dearer or not at all` : ''), ltotal: a.why ? '–' : sats(a.stakeSat), lwin: a.why ? '–' : sats(a.win),
+        : 'at ' + (a.top > bestOf(pick).ask ? bestOf(pick).ask + '–' + a.top : bestOf(pick).ask) + '¢' + (a.short ? `; only ${a.win.toLocaleString('en-US')} shares rest up to ${a.limitCents}¢ now: the rest may fill dearer or not at all` : '')
+          // #3710: a market order does not rest - said up front
+          + '; what does not fill in 60 s leaves the book', ltotal: a.why ? '–' : sats(a.stakeSat), lwin: a.why ? '–' : sats(a.win),
       err: current && current.free ? 'Orders need a paid round' : (!sellGo && OPENING.line(current, now)) || a.why || said,
       go: sellGo ? { disabled: !current || !!a.why || current.free || selling, text: 'Sell ' + outcomes[pick] }
         // VERSION 26 (bitcoin-arena, feedback #351): a window the seats have not got ready is not tradeable yet

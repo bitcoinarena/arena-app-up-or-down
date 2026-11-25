@@ -326,11 +326,17 @@ if (!A || !A.market) {
     if (sellSaid && now - sellSaid.at > 15000) sellSaid = null;
     const won = past.reduce((t, p) => t + (p.pnlMsat > 0 ? p.pnlMsat : 0), 0);
     const lost = past.reduce((t, p) => t + (p.pnlMsat < 0 ? -p.pnlMsat : 0), 0);
-    const num = (msat) => Math.floor(Math.abs(Number(msat)) / 1000).toLocaleString('en-US');
+    // #3721 (feedback #497): won, lost and net were each floored from msat on their own, the sign from the exact net - 49,500 won and
+    // 50,000 lost read "+49 · −50 · net −0". Each total is rounded once from the exact msat; netMsat is the shown net, so 0 has no sign.
+    // <totals-3721>
+    const TOTALS = (won, lost) => {
+      const r = (msat) => Math.round(Number(msat) / 1000) || 0, w = r(won), l = r(lost), n = r(won - lost), s = (x) => Math.abs(x).toLocaleString('en-US');
+      return { won: sats(w), lost: sats(l), net: sats(Math.abs(n)), netMsat: n * 1000 || 0, wonNum: s(w), lostNum: s(l), netNum: s(n) };
+    };
+    // </totals-3721>
     // #3666: "closed" counts the final rows only; the pending ones are said apart
     const counted = PAST.counts(past, now);
-    const totals = { count: counted.closed, won: satsOf(won), lost: satsOf(lost), net: satsOf(Math.abs(won - lost)), netMsat: won - lost,
-      wonNum: num(won), lostNum: num(lost), netNum: num(won - lost), pend: counted.pend };
+    const totals = { count: counted.closed, ...TOTALS(won, lost), pend: counted.pend };
     VIEW.kind(card.kind);
     const sideCents = (i) => { const b = bestOf(i); return dir === 'sell' ? (b.bid !== null ? b.bid : priceOf(i)) : priceOf(i); };
     // BEFORE THE BOOK IS READ THE PRICE IS NOT KNOWN (version 25, #084): 50% / 50¢ is a placeholder, shown as loading, never as a price

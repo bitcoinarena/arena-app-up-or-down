@@ -42,10 +42,12 @@ test('#3080: no cancel for an order past its expiry', () => {
 
 test('#3075: no Buy in a window the seats have not got ready', () => {
   const a = UNDER.indexOf("      go: sellGo ? "), b = UNDER.indexOf('\n', UNDER.indexOf("text: 'Buy ' + outcomes[pick] }", a));
-  const goOf = new Function('sellGo', 'current', 'a', 'selling', 'js', 'outcomes', 'pick', `return { ${UNDER.slice(a, b).trim().replace(/,$/, '')} }.go;`);
-  const notReady = goOf(false, { joinable: false, free: false }, {}, false, null, ['Up', 'Down'], 0);
+  // #3709: the not-ready button comes from the OPENING block (client-v26-opening-3709 checks its words); here only that Buy is off
+  const OPENING = { button: (c) => (c && c.joinable === false ? { disabled: true, text: 'Opening…' } : null) }, now = Date.now();
+  const goOf = new Function('sellGo', 'current', 'a', 'selling', 'js', 'outcomes', 'pick', 'OPENING', 'now', `return { ${UNDER.slice(a, b).trim().replace(/,$/, '')} }.go;`);
+  const notReady = goOf(false, { joinable: false, free: false }, {}, false, null, ['Up', 'Down'], 0, OPENING, now);
   assert.equal(notReady.disabled, true, 'Buy is enabled in a window that is not open yet');
-  const ready = goOf(false, { joinable: true, free: false }, {}, false, null, ['Up', 'Down'], 0);
+  const ready = goOf(false, { joinable: true, free: false }, {}, false, null, ['Up', 'Down'], 0, OPENING, now);
   assert.deepEqual(ready, { disabled: false, text: 'Buy Up' });
 });
 

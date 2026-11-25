@@ -243,6 +243,19 @@ const PAST = (() => {
   return { mark, isFinal, statusLine, counts };
 })();
 // </past-3666>
+// <opening-3709> A WINDOW ITS NODES HAVE NOT GOT READY IS SAID AS SUCH (bitcoin-arena, feedback #470): the 04:15 window showed its
+// price to beat, chance and "closes in 3:58" while Buy read "Opening…" (disabled) for minutes with no word why - its committee was seated late.
+// Now the line under the button says why, and once most of the window is gone it says the window cannot be traded instead of "Opening…".
+const OPENING = (() => {
+  const late = (current, now) => current.entryCloseMs - now < PERIOD_MS / 3;
+  const waiting = (current) => !!current && !current.free && current.joinable === false;
+  const line = (current, now) => (!waiting(current) ? ''
+    : late(current, now) ? `This window cannot be traded: its nodes did not get it ready in time (it closes in ${mmss(current.entryCloseMs - now)}). Orders go in the next window, from ${hhmm(current.entryCloseMs)} UTC.`
+      : 'This window is still being opened by its nodes: orders open in a moment.');
+  const button = (current, now) => (waiting(current) ? { disabled: true, text: late(current, now) ? 'Not tradeable' : 'Opening…' } : null);
+  return { line, button };
+})();
+// </opening-3709>
 
 // EVERYTHING ON THE SCREEN IS REACT'S (version 16): the view (view/UpDownView.jsx, inlined above) is handed one view model at every draw
 // and every press and keystroke comes back through `on`; this script keeps the market - its rows, the book, the prices, the orders and
@@ -520,11 +533,12 @@ if (!A || !A.market) {
       shares: shareRows, sells: sellCards, cancelAll: cancellable.length > 1 ? { busy: cancellingAll } : null,
       mwin: a.why || a.noSeller ? '–' : sats(a.win), mprice: a.why ? '' : a.noSeller ? 'no seller yet: your order waits up to 60 s for one'
         : 'at ' + (a.top > bestOf(pick).ask ? bestOf(pick).ask + '–' + a.top : bestOf(pick).ask) + '¢' + (a.short ? `; only ${a.win.toLocaleString('en-US')} shares rest up to ${a.limitCents}¢ now: the rest may fill dearer or not at all` : ''), ltotal: a.why ? '–' : sats(a.stakeSat), lwin: a.why ? '–' : sats(a.win),
-      err: current && current.free ? 'Orders need a paid round' : (a.why || said),
+      err: current && current.free ? 'Orders need a paid round' : (!sellGo && OPENING.line(current, now)) || a.why || said,
       go: sellGo ? { disabled: !current || !!a.why || current.free || selling, text: 'Sell ' + outcomes[pick] }
         // VERSION 26 (bitcoin-arena, feedback #351): a window the seats have not got ready is not tradeable yet
-        : current && current.joinable === false ? { disabled: true, text: 'Opening…' }
-        : { disabled: !current || !!a.why || current.free || !!(js && js.state === 'joining' && !js.cls), text: 'Buy ' + outcomes[pick] },
+        // #3709: and says why under the button, "Not tradeable" once most of the window is gone
+        : OPENING.button(current, now) ||
+        { disabled: !current || !!a.why || current.free || !!(js && js.state === 'joining' && !js.cls), text: 'Buy ' + outcomes[pick] },
       status: sellGo && (selling || sellSaid) ? (selling ? { line: 'Placing your sell …', cls: '' } : { line: sellSaid.line, cls: sellSaid.cls }) : js ? { line: js.line, cls: js.cls } : null, fee,
       flight, open: openCards, mineEmpty: open.length || flight || sellCards.length ? null : closed.length ? 'No open orders.' : 'No orders yet. Pick Up or Down and buy: your orders and their results show here.',
       past: pastRows, totals }, on);

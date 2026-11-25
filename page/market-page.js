@@ -13,7 +13,9 @@ document.getElementById('arena-lobby').insertAdjacentHTML('afterend', '<div id="
     // showed v26, and the orders read back from the seats were read only in rounds of the shown version): the page's ARENA_GAME_FAMILY (its tile's
     // versions, same developer key and name); the shown id alone when the page names none
     function ofShownGame(gameIdHex) {
-      const family = Array.isArray(window.ARENA_GAME_FAMILY) && window.ARENA_GAME_FAMILY.length ? window.ARENA_GAME_FAMILY : [window.ARENA_GAME && window.ARENA_GAME.game.id];
+      // bitcoin-arena kanban #3674: else the versions the Arena page's lobby reads (ARENA_GAME_IDS, its everyVersion) - the page names no family
+      const family = Array.isArray(window.ARENA_GAME_FAMILY) && window.ARENA_GAME_FAMILY.length ? window.ARENA_GAME_FAMILY
+        : Array.isArray(window.ARENA_GAME_IDS) && window.ARENA_GAME_IDS.length ? [window.ARENA_GAME && window.ARENA_GAME.game.id, ...window.ARENA_GAME_IDS] : [window.ARENA_GAME && window.ARENA_GAME.game.id];
       const id = String(gameIdHex || '').toLowerCase();
       return !!id && family.some((x) => String(x || '').toLowerCase() === id);
     }

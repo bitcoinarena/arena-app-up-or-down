@@ -39,3 +39,17 @@ test('#3668 a page that names no family reads the shown version only, as before'
   assert.equal(of(V26), true);
   assert.equal(of(V24), false);
 });
+
+// bitcoin-arena kanban #3674 (feedback #461): the Arena page names no ARENA_GAME_FAMILY; it names the versions its lobby reads as
+// ARENA_GAME_IDS (index.html everyVersion, Up/Down included since #3674). A v24 order under the v26 tile is read back from those.
+test('#3674 a page that names the tile versions as ARENA_GAME_IDS reads back the v24 round', () => {
+  const store = new Map();
+  const ctx = { sessionStorage: { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) },
+    ARENACLIENT: { fromHex: (x) => x, toHex: (x) => x }, console, setInterval: () => 0, setTimeout: () => 0,
+    document: { getElementById: () => ({ insertAdjacentHTML() {} }) }, ARENA_GAME: { game: { id: V26 } }, ARENA_GAME_IDS: [V26, V24] };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(SCRIPT, ctx);
+  assert.equal(ctx.ofShownGame(V24), true, 'the v24 round is not read back');
+  assert.equal(ctx.ofShownGame(RPS), false);
+});
